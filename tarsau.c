@@ -32,6 +32,9 @@ void create_archive(const char *outputFileName, const char *fileNames[], int num
         error_exit("Error opening output file for writing.");
     }
 
+    // Write the description
+    write_organization_section(outputFile, fileNames, numFiles);
+
     // Write archived files
     for (int i = 0; i < numFiles; ++i)
     {
@@ -58,6 +61,26 @@ void create_archive(const char *outputFileName, const char *fileNames[], int num
     fclose(outputFile);
 
     printf("Archive created successfully: %s\n", outputFileName);
+}
+
+void write_organization_section(FILE *outputFile, const char *fileNames[], int numFiles)
+{
+    // Write first 10 byte
+    fprintf(outputFile, "%-10d", numFiles);
+
+    for (int i = 0; i < numFiles; ++i)
+    {
+        struct stat fileStat;
+        if (stat(fileNames[i], &fileStat) != 0)
+        {
+            error_exit("Error getting file information.");
+        }
+
+        // Write file information 
+        fprintf(outputFile, "|%s,%o,%ld|", fileNames[i], fileStat.st_mode & 0777, fileStat.st_size);
+    }
+
+    fprintf(outputFile, "\n");
 }
 
 int main(int argc, char *argv[])
