@@ -1,0 +1,7 @@
+texts/
+outputs/
+.vscode/
+*.sau
+*.exe
+*.txt
+*.dat
