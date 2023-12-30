@@ -58,6 +58,9 @@ void create_archive(const char *outputFileName, const char *fileNames[], int num
         fclose(inputFile);
     }
 
+    //eof marker
+    fputc(0x1A, outputFile);
+
     fclose(outputFile);
 
     printf("Archive created successfully: %s\n", outputFileName);
@@ -83,9 +86,144 @@ void write_organization_section(FILE *outputFile, const char *fileNames[], int n
     fprintf(outputFile, "\n");
 }
 
+char** extractFileNames(const char *input, int *numFiles) {
+    const char *delimiter = "||";
+    const char *innerDelimiter = ",";
+
+    char buffer[256]; 
+    strncpy(buffer, input + 10, sizeof(buffer) - 1);  
+    buffer[sizeof(buffer) - 1] = '\0';  
+
+    char *token = strtok(buffer, delimiter);
+    char **fileNames = malloc(MAX_FILES * sizeof(char*));
+    *numFiles = 0;
+
+    while (token != NULL && *numFiles < MAX_FILES) {
+        // Check if the token starts with "texts/"
+        if (strncmp(token, "texts/", 6) == 0) {
+            // Extract the file name
+            const char *fileNameToken = strstr(token, "texts/") + 6;
+            char *endToken = strchr(fileNameToken, ',');
+            if (endToken != NULL) {
+                // Calculate the length of the file name
+                size_t fileNameLength = endToken - fileNameToken;
+                
+                // Allocate memory for the file name and copy it
+                fileNames[*numFiles] = malloc((fileNameLength + 1) * sizeof(char));
+                strncpy(fileNames[*numFiles], fileNameToken, fileNameLength);
+                fileNames[*numFiles][fileNameLength] = '\0';
+                (*numFiles)++;
+            }
+        } 
+
+        token = strtok(NULL, delimiter);
+    }
+
+    return fileNames;
+}
+
+void writeToFiles(const char *organizationSection, const char *textContent) {
+    int numFiles;
+    char **fileNames = extractFileNames(organizationSection, &numFiles);
+
+    // Open and write to each file
+    FILE *file;
+    const char *line = textContent;
+
+    for (int i = 0; i < numFiles; i++) {
+        char fullPath[256];  
+        snprintf(fullPath, sizeof(fullPath), "%s", fileNames[i]);  
+        file = fopen(fullPath, "w");
+
+        if (file != NULL) {
+            // Write a line to the file
+            const char *newline = strchr(line, '\n');
+            size_t lineLength = (newline != NULL) ? (size_t)(newline - line) : strlen(line);
+            fwrite(line, sizeof(char), lineLength, file);
+
+            fclose(file);
+            printf("Content written to %s\n", fullPath);
+
+            // Move to the next line
+            line = (newline != NULL) ? (newline + 1) : NULL;
+        } else {
+            fprintf(stderr, "Error opening %s for writing\n", fullPath);
+        }
+    }
+
+    // Free memory
+    for (int i = 0; i < numFiles; i++) {
+        free(fileNames[i]);
+    }
+    free(fileNames);
+}
+
+void extract_archive(const char *archiveFileName, const char *extractDir) {
+    FILE *archiveFile = fopen(archiveFileName, "r");
+    if (archiveFile == NULL) {
+        fprintf(stderr, "Error opening archive file: %s\n", archiveFileName);
+        return;
+    }
+
+    // Read organization section
+    char organizationSection[256];  
+    fgets(organizationSection, sizeof(organizationSection), archiveFile);
+
+    // Skip an empty line
+    fgets(organizationSection, sizeof(organizationSection), archiveFile);
+
+    // Create the extraction directory if it doesn't exist
+    mkdir(extractDir, 0777);
+
+    // Extract file names
+    int numFiles;
+    char **fileNames = extractFileNames(organizationSection, &numFiles);
+
+    // Read the content of each file and write it to the corresponding file
+    for (int i = 0; i < numFiles; i++) {
+        char *content = NULL;
+        size_t contentSize = 0;
+
+        // Read content from the archive line by line
+        ssize_t bytesRead;
+        while ((bytesRead = getline(&content, &contentSize, archiveFile)) != -1) {
+            // If a newline character is present at the end, remove it
+            if (bytesRead > 0 && content[bytesRead - 1] == '\n') {
+                content[bytesRead - 1] = '\0';
+            }
+
+            char *fullPath = malloc(strlen(extractDir) + strlen(fileNames[i]) + 2); 
+            sprintf(fullPath, "%s/%s", extractDir, fileNames[i]);
+
+            FILE *file = fopen(fullPath, "w");
+            if (file != NULL) {
+                // Write content to the file
+                fprintf(file, "%s", content);
+
+                fclose(file);
+                printf("Content written to %s\n", fullPath);
+
+                free(fullPath);
+                free(content);
+                break;  // Move to the next file after writing the content
+            } else {
+                fprintf(stderr, "Error opening %s for writing\n", fullPath);
+                free(fullPath);
+            }
+        }
+    }
+
+    // Free allocated memory
+    for (int i = 0; i < numFiles; i++) {
+        free(fileNames[i]);
+    }
+    free(fileNames);
+
+    fclose(archiveFile);
+}
+
 int main(int argc, char *argv[])
 {
-    // Check if the required arguments are provided
     if (argc < 3)
     {
         error_exit("Usage: tarsau -b|-a -o <output_file> <input_file1> <input_file2> ...");
@@ -93,7 +231,7 @@ int main(int argc, char *argv[])
 
     if (strcmp(argv[1], "-b") == 0)
     {
-        char *outputFileName = "a.sau"; // Default output file name
+        char *outputFileName = "a.sau"; 
 
         for (int i = 2; i < argc; ++i)
         {
@@ -129,6 +267,23 @@ int main(int argc, char *argv[])
         }
 
         create_archive(outputFileName, fileNames, numFiles);
+    } else if (strcmp(argv[1], "-a") == 0) {
+        //Archive extraction (-a)
+        if (argc != 4) {
+            error_exit("Usage: tarsau -a <archive_file.sau> <extract_directory>");
+        }
+
+        const char *archiveFileName = argv[2];
+        const char *extractDirName = argv[3];
+
+        // Check if the archive file exists
+        struct stat archiveStat;
+        if (stat(archiveFileName, &archiveStat) != 0 || !S_ISREG(archiveStat.st_mode)) {
+            error_exit("Archive file is inappropriate or corrupt!");
+        }
+
+        // Extract the archive
+        extract_archive(archiveFileName, extractDirName);
     }
     else
     {
